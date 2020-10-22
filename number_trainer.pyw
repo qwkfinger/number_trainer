@@ -9,6 +9,7 @@ import datetime
 import random
 import subprocess
 import shutil
+import decimal
 
 import winsound
 from PyQt5 import QtWidgets, uic
@@ -134,18 +135,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(text)
 
     def update_ui(self, model):
+        self.comboBox_presets.blockSignals(True)
+        self.spinBox_from.blockSignals(True)
+        self.spinBox_to.blockSignals(True)
+        self.spinBox_fraction.blockSignals(True)
+
         self.spinBox_from.setValue(model.number_from)
         self.spinBox_to.setValue(model.number_to)
         self.spinBox_fraction.setValue(model.fraction)
         self.dial_speed.setValue(int(model.playback_speed/10.0))
         self.label_speed.setText(str(model.playback_speed) + "%")
-        self.comboBox_presets.blockSignals(True)
         self.comboBox_presets.clear()
         self.comboBox_presets.addItems(model.presets.keys())
         index = self.comboBox_presets.findText(model.selected_preset, Qt.MatchFixedString)
         if index >= 0:
             self.comboBox_presets.setCurrentIndex(index)
+
         self.comboBox_presets.blockSignals(False)
+        self.spinBox_from.blockSignals(False)
+        self.spinBox_to.blockSignals(False)
+        self.spinBox_fraction.blockSignals(False)
 
     def closeEvent(self, event=None):
         self.signals.app_quit.emit()
@@ -251,23 +260,35 @@ class Model:
         self.learning_language = "fr"
         self.native_language = "de"
 
+        self.number_stack = []
+
         self.app = QtWidgets.QApplication(sys.argv) # Create an instance of QtWidgets.QApplication
         self.gui = MainWindow(self.signals) # Create an instance of our class
         self.change_preset(self.selected_preset)
         self.gui.show() # Show the GUI
         self.app.exec_() # Start the application
 
+    @staticmethod
+    def float_range(start, stop, step):
+        while start < stop:
+            yield float(start)
+            start += decimal.Decimal(step)
+
     def new_number(self):
-        old_number = self.number
-        while old_number == str(self.number).replace(".", ","):
+        if self.number_stack:
+            pass
+        else:
             if self.fraction == 0:
-                self.number = random.randint(self.number_from, self.number_to)
-            elif self.fraction <=0:
-                self.number = int(round(random.uniform(self.number_from, self.number_to), self.fraction))
+                self.number_stack = list(range(int(self.number_from), int(self.number_to)))
+                random.shuffle(self.number_stack)
             else:
-                self.number = round(random.uniform(self.number_from, self.number_to), self.fraction)
+                stack  = list(self.float_range(self.number_from, self.number_to, 1/(10**(self.fraction))))
+                for number in stack:
+                    self.number_stack.append(round(number, self.fraction))
+                random.shuffle(self.number_stack)
             if self.number_from == self.number_to:
-                break
+                self.number_stack = [self.number_from]
+        self.number = self.number_stack.pop(0)
         self.number = str(self.number).replace(".", ",")
         self.say_number()
         self.signals.update_text.emit("")
@@ -316,12 +337,18 @@ class Model:
 
     def change_from(self, value):
         self.number_from = value
+        self.number_stack = []
+        self.new_number()
 
     def change_to(self, value):
         self.number_to = value
+        self.number_stack = []
+        self.new_number()
 
     def change_fraction(self, value):
         self.fraction = value
+        self.number_stack = []
+        self.new_number()
 
     def change_preset(self, value):
         self.number_from = self.presets[value]["from"]
@@ -330,6 +357,7 @@ class Model:
         self.playback_speed = self.presets[value]["speed"]
         self.selected_preset = value
         self.signals.update_ui.emit(self)
+        self.number_stack = []
         self.new_number()
 
     def change_speed(self, value):
@@ -380,3 +408,4 @@ def main(args):
 if __name__ == "__main__":
     main(sys.argv)
 
+#TODO Cache numbers
