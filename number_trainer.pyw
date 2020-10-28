@@ -1,26 +1,20 @@
 # -*- coding: utf-8 -*-
-"""
-A tool to assist learning a language.
-"""
+"""A tool to assist learning a language."""
 
 import sys
 import os
-import datetime
 import random
 import subprocess
 import shutil
 import decimal
+import time
 
-import winsound
 from PyQt5 import QtWidgets, uic
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
 
 from googletrans import Translator
-import difflib
-import speech_recognition as sr
 from gtts import gTTS
 import playsound
-import tempfile
 
 class Signals(QObject):
     """Create signals."""
@@ -99,22 +93,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lineEdit_answer.setFocus()
 
     def on_change_from(self, event=None):
+        del event
         self.signals.change_from.emit(self.spinBox_from.value())
         self.lineEdit_answer.setFocus()
 
     def on_change_to(self, event=None):
+        del event
         self.signals.change_to.emit(self.spinBox_to.value())
         self.lineEdit_answer.setFocus()
 
     def on_change_fraction(self, event=None):
+        del event
         self.signals.change_fraction.emit(self.spinBox_fraction.value())
         self.lineEdit_answer.setFocus()
 
     def on_change_preset(self, event=None):
+        del event
         self.signals.change_preset.emit(self.comboBox_presets.currentText())
         self.lineEdit_answer.setFocus()
 
     def on_change_speed(self, event=None):
+        del event
         value = self.dial_speed.value()
         self.label_speed.setText(str(int(value*10.0)) + "%")
         self.signals.change_speed.emit(int(value*10.0))
@@ -157,6 +156,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spinBox_fraction.blockSignals(False)
 
     def closeEvent(self, event=None):
+        del event
         self.signals.app_quit.emit()
 
 class Model:
@@ -175,6 +175,8 @@ class Model:
         self.number_to = 0
         self.fraction = 0
         self.playback_speed = 100
+        self.errors = 0
+        self.max_errors = 2
 
         self.presets = {
             "0 à 10" : {
@@ -250,12 +252,12 @@ class Model:
                 "speed" : 70,
                 },
             }
-        self.selected_preset ="0 à 10"
+        self.selected_preset = "0 à 10"
         if os.path.exists("settings.txt"):
             with open("settings.txt", "r", encoding="utf-8") as filehandler:
                 self.selected_preset = filehandler.read()
         if self.selected_preset not in self.presets:
-            self.selected_preset ="0 à 10"
+            self.selected_preset = "0 à 10"
 
         self.learning_language = "fr"
         self.native_language = "de"
@@ -282,7 +284,9 @@ class Model:
                 self.number_stack = list(range(int(self.number_from), int(self.number_to)))
                 random.shuffle(self.number_stack)
             else:
-                stack  = list(self.float_range(self.number_from, self.number_to, 1/(10**(self.fraction))))
+                stack = list(
+                    self.float_range(
+                        self.number_from, self.number_to, 1/(10**(self.fraction))))
                 for number in stack:
                     self.number_stack.append(round(number, self.fraction))
                 random.shuffle(self.number_stack)
@@ -296,11 +300,18 @@ class Model:
         self.signals.show_solution.emit("")
 
     def repeat(self):
-        self.say_number(slow=True)
+        self.app.setOverrideCursor(Qt.WaitCursor)
+        self.errors += 1
+        if self.errors > self.max_errors:
+            self.say_number(slow=True)
+        else:
+            self.say_number(slow=False)
         #self.signals.update_text.emit("")
+        self.app.restoreOverrideCursor()
 
     def answer(self, answer):
         if self.number == answer:
+            self.errors = 0
             playsound.playsound(r"C:\Windows\Media\ding.wav", False)
             self.signals.show_result.emit("Correct!")
             self.signals.update_statusbar.emit("The answer was correct. Speaking next number ...")
@@ -318,8 +329,10 @@ class Model:
         self.signals.update_text.emit("")
 
     def say_number(self, slow=False):
+        self.app.setOverrideCursor(Qt.WaitCursor)
         self.app.processEvents()
         self.synthesize(self.number, slow)
+        self.app.restoreOverrideCursor()
 
     def connect_signals(self):
         """Connect signals."""
@@ -364,17 +377,38 @@ class Model:
         self.playback_speed = value
 
     def synthesize(self, text, slow):
-        self.signals.update_statusbar.emit("Speaking ...")
+        self.signals.update_statusbar.emit("Synthesizing ...")
         language = self.learning_language
         #mp3_fp = BytesIO()
-        tmpfile = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-        tmpfile.close()
-        tts = gTTS(text=text, lang=language, slow=slow)
-        tts.save(tmpfile.name)
-        self.apply_speed_change(tmpfile.name, speed=self.playback_speed/100.0)
-        playsound.playsound(tmpfile.name, False)
-        tmpfile.close()
-        os.remove(tmpfile.name)
+        filename = "{}_{}_{}.mp3".format(language, text, slow)
+        sound_file = os.path.join(
+            os.getcwd(),
+            "cache",
+            filename,
+            )
+        os.makedirs(os.path.dirname(sound_file), exist_ok=True)
+        if os.path.exists(sound_file):
+            pass
+        else:
+            tts = gTTS(text=text, lang=language, slow=slow)
+            counter = 0
+            while counter < 3:
+                try:
+                    tts.save(sound_file)
+                    counter = 0
+                    break
+                except Exception as exception:
+                    print(exception)
+                    self.signals.update_statusbar.emit(
+                        "Waiting for Google TTS, try {}/{} ...".format(counter+1, 3))
+                    time.sleep(1)
+                    counter += 1
+            if counter != 0:
+                self.signals.update_statusbar.emit("Timout on Google TTS, try the repeat button.")
+        self.signals.update_statusbar.emit("Setting speed ...")
+        self.apply_speed_change(sound_file, speed=self.playback_speed/100.0)
+        self.signals.update_statusbar.emit("Speaking ...")
+        playsound.playsound(sound_file, False)
         self.signals.update_statusbar.emit("Waiting for answer ...")
 
     def apply_speed_change(self, file, speed=1.0):
@@ -403,9 +437,12 @@ class Model:
 
 def main(args):
     """Create instance of class and run its main method."""
-    app = Model(args)
+    Model(args)
 
 if __name__ == "__main__":
     main(sys.argv)
 
-#TODO Cache numbers
+#* added caching of sound files
+#* added timeout on gTTS
+#* added wait cursor during synthesis
+#* changed slowing down on repeat: only after 3 errors
