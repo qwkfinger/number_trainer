@@ -11,10 +11,13 @@ import time
 
 from PyQt5 import QtWidgets, uic
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
+from PyQt5.QtMultimedia import QSound
+from PyQt5.QtMultimedia import QMediaContent, QMediaPlayer, QMediaPlaylist
+from PyQt5.QtCore import QDir, Qt, QUrl
 
 from googletrans import Translator
 from gtts import gTTS
-import playsound
+#import playsound
 
 class Signals(QObject):
     """Create signals."""
@@ -65,6 +68,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.signals.update_ui.connect(self.update_ui)
         #self.textEdit_mytext.setTabChangesFocus(True)
         self.lineEdit_answer.setFocus()
+        self.media_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+        self.media_player.mediaStatusChanged[QMediaPlayer.MediaStatus].connect(self.on_media_status_changed)
 
     def on_new(self, event=None):
         """React on button press."""
@@ -117,6 +122,16 @@ class MainWindow(QtWidgets.QMainWindow):
         value = self.dial_speed.value()
         self.label_speed.setText(str(int(value*10.0)) + "%")
         self.signals.change_speed.emit(int(value*10.0))
+        
+    def on_media_status_changed(self, status):
+        if status == QMediaPlayer.EndOfMedia:
+            empty_playlist = QMediaPlaylist()
+            self.media_player.setPlaylist(empty_playlist )
+            
+    def playsound(self, path):
+        if os.path.exists(path):
+            self.media_player.setMedia(QMediaContent(QUrl.fromLocalFile(path)))
+            self.media_player.play()
 
     def update_text(self, text):
         """Update window."""
@@ -182,6 +197,12 @@ class Model:
             "0 à 10" : {
                 "from" : 0,
                 "to" : 10,
+                "fraction" : 0,
+                "speed" : 100,
+                },
+            "0 à 60" : {
+                "from" : 0,
+                "to" : 60,
                 "fraction" : 0,
                 "speed" : 100,
                 },
@@ -312,17 +333,17 @@ class Model:
     def answer(self, answer):
         if self.number == answer:
             self.errors = 0
-            playsound.playsound(r"C:\Windows\Media\ding.wav", False)
+            self.gui.playsound(r"C:\Windows\Media\ding.wav")
             self.signals.show_result.emit("Correct!")
             self.signals.update_statusbar.emit("The answer was correct. Speaking next number ...")
             self.new_number()
         else:
-            playsound.playsound(r"C:\Windows\Media\chord.wav", False)
+            self.gui.playsound(r"C:\Windows\Media\chord.wav")
             self.signals.update_statusbar.emit("The answer was wrong, please try again ...")
             self.signals.show_result.emit("Wrong!")
             self.repeat()
         self.signals.update_text.emit("")
-
+        
     def solve(self):
         self.signals.update_statusbar.emit("OK, showing solution ...")
         self.signals.show_solution.emit(self.number)
@@ -408,7 +429,7 @@ class Model:
         self.signals.update_statusbar.emit("Setting speed ...")
         self.apply_speed_change(sound_file, speed=self.playback_speed/100.0)
         self.signals.update_statusbar.emit("Speaking ...")
-        playsound.playsound(sound_file, False)
+        self.gui.playsound(sound_file)
         self.signals.update_statusbar.emit("Waiting for answer ...")
 
     def apply_speed_change(self, file, speed=1.0):
@@ -428,7 +449,10 @@ class Model:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         subprocess.Popen(cmd, startupinfo=startupinfo, shell=False).wait()
-        shutil.move(outfile, file)
+        try:
+            shutil.move(outfile, file)
+        except:
+            print("Could not move file.")
 
     def app_quit(self):
         with open("settings.txt", "w", encoding="utf-8") as filehandler:
